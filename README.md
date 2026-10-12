@@ -91,3 +91,11 @@ priority surveys, project milestone campaigns, server-side photo scanning,
 additional languages and national expansion are future phases.
 No software license has been selected; OSM and third-party licenses retain their
 own terms. There is no emergency response service or direct donation collection.
+
+## Isolated browser verification
+
+Set `APP_STATE_DIR` on the local runner to keep browser fixtures separate from
+your saved data. The default remains `.local-state`; existing records are preserved.
+For example, use `APP_STATE_DIR=/tmp/community-connect-qa npm run local`,
+then run `python3 scripts/e2e.py` in another terminal. Use a fresh directory for
+each run. Browser checks include 320px, 390px, 768px and 1440px layouts.
