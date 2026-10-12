@@ -30,3 +30,13 @@ audit actor references anonymized. Backups require separate retention controls.
 Local preview uses a random HttpOnly SameSite session, a Host allowlist and loopback
 bind. It is development-only. There are no donations, payments, unrestricted chat,
 official government integrations, public child profiles or email sends.
+
+## Dependency audit — 12 October 2026
+
+Targeted patch updates remove all production dependency findings:
+`npm audit --omit=dev` reports 0. The full toolchain audit still reports 19
+packages (11 high, 5 moderate, 3 low, including parent propagation), primarily
+glob/parser and build/migration utilities. A glob parser has no patched release
+available. Build only trusted source and keep development servers on loopback.
+A supported toolchain upgrade remains an explicit release task; do not describe
+the entire dependency tree as clean. See PRODUCT_PLAN.md for the roadmap.

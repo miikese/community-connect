@@ -11,3 +11,25 @@ describe("community data rules",()=>{
  it("requires actionable opportunity instructions and safe URLs",()=>{const base={title:"Volunteer activity",description:"A public volunteer activity for browser test.",category:"Volunteer",lga:"Otukpo",lat:7.19,lng:8.13};expect(()=>validate("opportunity",base)).toThrow();expect(()=>validate("opportunity",{...base,instructions:"Register here",website:"javascript:alert(1)"})).toThrow();});
  it("exports real dated events using escaped calendar fields",()=>{const data=calendar("Workshop; useful, local","2030-01-30","Bring a notebook\nNo fee");expect(data).toContain("DTSTART;VALUE=DATE:20300130");expect(data).toContain("DTEND;VALUE=DATE:20300131");expect(data).toContain("SUMMARY:Workshop\\; useful\\, local");expect(data).toContain("DESCRIPTION:Bring a notebook\\nNo fee");});
 });
+
+describe("real dates and safe public links",()=>{
+ const base={title:"Community workshop",description:"A test community workshop with actionable instructions.",category:"Volunteer",lga:"Otukpo",lat:7.19,lng:8.13,instructions:"Register through the activity."};
+ it("rejects impossible calendar dates and accepts leap days",()=>{
+  for(const date of ["2026-02-30","2026-02-29","2026-04-31","2026-13-01"]){
+   expect(()=>validate("opportunity",{...base,deadline:date})).toThrow();
+   expect(()=>validate("opportunity",{...base,eventDate:date})).toThrow();
+   expect(()=>calendar("Workshop",date,"Details")).toThrow();
+  }
+  expect(validate("opportunity",{...base,eventDate:"2028-02-29"}).eventDate).toBe("2028-02-29");
+ });
+ it("closes event participation even when no deadline was specified",()=>{
+  expect(isJoinable({category:"Event",eventDate:"2026-10-10"},"2026-10-12")).toBe(false);
+  expect(isJoinable({category:"Event",eventDate:"2026-10-12"},"2026-10-12")).toBe(true);
+  expect(isJoinable({category:"Volunteer",eventDate:"2026-10-15",deadline:"2026-10-11"},"2026-10-12")).toBe(false);
+ });
+ it("rejects malformed and credential-bearing HTTPS links",()=>{
+  for(const website of ["https://","https://user:password@example.com","https://example.com/a b"])
+   expect(()=>validate("opportunity",{...base,website})).toThrow();
+  expect(validate("opportunity",{...base,website:"https://example.com/activity"}).website).toBe("https://example.com/activity");
+ });
+});

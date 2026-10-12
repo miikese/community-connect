@@ -52,7 +52,16 @@ export async function handle(req:Request,ctx:Context):Promise<Response> {
   if(path==="records" && req.method==="GET") {
    const kind=url.searchParams.get("kind")||"",mine=url.searchParams.get("mine")==="1",review=url.searchParams.get("review")==="1";
    if(mine)signed();if(review)await admin();
-   let rows:Stored[]=await all("SELECT * FROM records ORDER BY created DESC LIMIT 1000");
+   // Filter privacy and listing type before limiting: pending reports cannot
+   // crowd approved public records or another resident's own submissions out.
+   const clauses:string[]=[],args:BindValue[]=[];
+   if(mine){clauses.push("owner=?");args.push(user!.userId);}
+   else if(!review){
+    clauses.push("kind IN ("+domain.publicKinds.map(()=>"?").join(",")+")","status IN ("+domain.publicStatuses.map(()=>"?").join(",")+")");
+    args.push(...domain.publicKinds,...domain.publicStatuses);
+   }
+   if(kind){clauses.push("kind=?");args.push(kind);}
+   let rows:Stored[]=await all("SELECT * FROM records"+(clauses.length?" WHERE "+clauses.join(" AND "):"")+" ORDER BY created DESC LIMIT 1000",...args);
    if(!review) rows=rows.filter(r=>mine?r.owner===user!.userId:domain.publicKinds.includes(r.kind)&&domain.publicStatuses.includes(r.status));
    if(kind)rows=rows.filter(r=>r.kind===kind);
    const counts=rows.reduce((a:Record<string,number>,r)=>({...a,[r.status]:(a[r.status]||0)+1}),{});

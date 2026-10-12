@@ -67,7 +67,7 @@ npm run build:local
 npm run build
 ```
 
-23 real rule/API tests cover lifecycle, privacy, rounding, permissions, reviewed
+28 real rule/API tests cover lifecycle, privacy, rounding, permissions, reviewed
 organization ownership, volunteer deadlines/registration, private requests,
 abuse moderation, secure upload validation, deletion and aggregate/calendar rules.
 Python Playwright exercises the actual built UI across desktop and mobile.

@@ -20,3 +20,17 @@ it("queues abuse flags for moderators",async()=>{const id=await create("skill",{
 it("never exposes private volunteer profiles",async()=>{await create("profile",{name:"Private volunteer",interests:"Programming and teaching",lga:"Otukpo"});expect((await call("records")).body.records).toHaveLength(0);});
 it("rejects HTML uploads and oversized payloads",async()=>{ctx.bucket={}as R2Bucket;const r=await handle(new Request("https://example.test/api/upload",{method:"POST",headers:{"content-type":"image/svg+xml"},body:"<svg>malicious</svg>"}),ctx);expect(r.status).toBe(400);expect((await call("records","POST",{kind:"issue",data:{...base,description:"x".repeat(15000)}})).status).toBe(413);});
 it("deletes own records without deleting another member's data",async()=>{await create();ctx.user={userId:"other",displayName:"Other"};await create();await call("account","DELETE");ctx.user=member;expect((await call("records?mine=1")).body.records).toHaveLength(1);});
+
+it("does not let pending volume hide approved issues or a resident's own records",async()=>{
+ const id=await create();await status(id,"awaiting-review");await status(id,"verified");ctx.user=member;
+ const own=await create();
+ await db.batch(Array.from({length:1001},(_,i)=>db.prepare("INSERT INTO records(id,kind,owner,status,data,created,updated) VALUES(?,?,?,?,?,?,?)").bind("pending-"+i,"issue","other-resident","submitted",JSON.stringify(base),"2099-01-01","2099-01-01")));
+ const visible=(await call("records?kind=issue")).body.records;
+ expect(visible.map((r:any)=>r.id)).toEqual([id]);expect(visible[0]).not.toHaveProperty("owner");
+ expect((await call("records?mine=1")).body.records.map((r:any)=>r.id).sort()).toEqual([id,own].sort());
+});
+it("rejects participation in a completed event without an application deadline",async()=>{
+ const org=await organization(),id=await create("opportunity",{...base,category:"Event",instructions:"Register to participate.",organization:org,eventDate:"2000-01-01"});
+ await status(id,"approved");ctx.user=member;
+ expect((await call("actions","POST",{record:id,type:"join"})).status).toBe(400);
+});
