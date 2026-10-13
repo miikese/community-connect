@@ -1,6 +1,8 @@
+import {accountAuth,accountSession} from "./account-auth";
+import {communityRoute} from "./communities";
 import {translate,type TranslationOptions} from "./translation";
 import * as domain from "./domain";
-export type Identity = {userId:string;displayName:string;email?:string}|null;
+export type Identity = {userId:string;displayName:string;email?:string;passwordAccount?:boolean}|null;
 export type Stored = {id:string;kind:string;owner:string;status:string;data:string;created:string;updated:string};
 type BindValue = string|number|null;
 export type DB = {prepare(sql:string):{bind(...values:BindValue[]):any;first<T=any>():Promise<T|null>;all<T=any>():Promise<{results:T[]}>;run():Promise<any>};batch(statements:any[]):Promise<any>};
@@ -25,13 +27,18 @@ export function serialize(row:Stored,privateView=false) {
  return {...safe,...(privateView?{owner}:{}),data:JSON.parse(row.data)};
 }
 export async function handle(req:Request,ctx:Context):Promise<Response> {
- const {db,user}=ctx,url=new URL(req.url),path=url.pathname.replace(/^\/api\/?/,""),now=new Date().toISOString();
+ const {db}=ctx,user=await accountSession(req,db)||ctx.user,url=new URL(req.url),path=url.pathname.replace(/^\/api\/?/,""),now=new Date().toISOString();
  const id=()=>crypto.randomUUID();
  const stmt=(sql:string,...args:BindValue[])=>db.prepare(sql).bind(...args);
  const all=async(sql:string,...args:BindValue[])=>(await stmt(sql,...args).all()).results;
  const signed=()=>{if(!user)error("Sign in to continue.",401);return user!;};
- const admin=async()=>{const u=signed();const r=await stmt("SELECT role FROM users WHERE id=?",u.userId).first();if(!ctx.adminIds.includes(u.userId)&&!(u.email&&ctx.adminEmails?.includes(u.email.toLowerCase()))&&r?.role!=="admin"&&r?.role!=="moderator")error("Moderator access required.",403);return u;};
+ const admin=async()=>{const u=signed();const r=await stmt("SELECT role FROM users WHERE id=?",u.userId).first();if(!ctx.adminIds.includes(u.userId)&&!(!u.passwordAccount&&u.email&&ctx.adminEmails?.includes(u.email.toLowerCase()))&&r?.role!=="admin"&&r?.role!=="moderator"&&r?.role!=="super-admin")error("Moderator access required.",403);return u;};
  try {
+  if(path.startsWith("auth/")&&req.method==="POST"){
+   if((req.headers.get("origin")&&req.headers.get("origin")!==url.origin)||req.headers.get("sec-fetch-site")==="cross-site")error("Cross-origin authentication is not allowed.",403);
+   return await accountAuth(req,db,path,path==="auth/logout"?{}:await body(req));
+  }
+  if(path==="auth/status"&&req.method==="GET")return json({user});
   if(path==="translate" && req.method==="POST") {
    if(req.headers.get("origin") && req.headers.get("origin")!==url.origin)error("Cross-origin writes are not allowed.",403);
    const key="translation:"+Math.floor(Date.now()/60000),limit=await stmt("INSERT INTO limits(id,count) VALUES(?,1) ON CONFLICT(id) DO UPDATE SET count=count+1 RETURNING count",key).first();
@@ -47,6 +54,7 @@ export async function handle(req:Request,ctx:Context):Promise<Response> {
    if(limit.count>35)error("Please wait a minute before trying again.",429);
    if(Math.random()<0.02) await stmt("DELETE FROM limits WHERE id NOT LIKE ?", "%:"+Math.floor(Date.now()/60000)).run();
   }
+  const communityResponse=await communityRoute(req,{...ctx,user},()=>body(req),json);if(communityResponse)return communityResponse;
   if(path==="seed" && req.method==="POST") {
    await admin();const seed=ctx.seed||[];if(seed.length)await db.batch(seed.map(r=>stmt("INSERT OR IGNORE INTO records(id,kind,owner,status,data,created,updated) VALUES(?,?,?,?,?,?,?)",r.id,r.kind,"osm-import",r.status,JSON.stringify(r.data),now,now)));return json({imported:seed.length});
   }
@@ -54,7 +62,7 @@ export async function handle(req:Request,ctx:Context):Promise<Response> {
    if(!user)return json({user:null});
    await stmt("INSERT INTO users(id,name,role) VALUES(?,?,'member') ON CONFLICT(id) DO UPDATE SET name=excluded.name",user.userId,user.displayName).run();
    const u=await stmt("SELECT * FROM users WHERE id=?",user.userId).first();
-   return json({user:{id:user.userId,name:user.displayName,role:(ctx.adminIds.includes(user.userId)||(user.email&&ctx.adminEmails?.includes(user.email.toLowerCase())))?"admin":u.role},notifications:await all("SELECT * FROM notifications WHERE owner=? ORDER BY created DESC LIMIT 50",user.userId)});
+   return json({user:{id:user.userId,name:user.displayName,role:(ctx.adminIds.includes(user.userId)||(!user.passwordAccount&&user.email&&ctx.adminEmails?.includes(user.email.toLowerCase())))?"super-admin":u.role},notifications:await all("SELECT * FROM notifications WHERE owner=? ORDER BY created DESC LIMIT 50",user.userId)});
   }
   if(path==="records" && req.method==="GET") {
    const kind=url.searchParams.get("kind")||"",mine=url.searchParams.get("mine")==="1",review=url.searchParams.get("review")==="1";
@@ -135,7 +143,9 @@ export async function handle(req:Request,ctx:Context):Promise<Response> {
   if(path==="contacts"&&req.method==="GET"){return json({requests:await all("SELECT actions.id,actions.record,actions.data,actions.created,users.name FROM actions JOIN records ON records.id=actions.record LEFT JOIN users ON users.id=actions.owner WHERE actions.type='contact' AND records.owner=? ORDER BY actions.created DESC",signed().userId)});}
   if(path==="notifications" && req.method==="POST"){await stmt("UPDATE notifications SET read=1 WHERE owner=?",signed().userId).run();return json({read:true});}
   if(path==="account" && req.method==="DELETE") {
-   const u=signed();const photos=await all("SELECT id FROM uploads WHERE owner=?",u.userId);
+   const u=signed();if(await stmt("SELECT id FROM communities WHERE owner=?",u.userId).first())error("Transfer ownership or delete your workspaces before deleting your account.",409);
+   await db.batch([stmt("DELETE FROM community_admins WHERE user=?",u.userId),stmt("DELETE FROM account_sessions WHERE user_id=?",u.userId),stmt("DELETE FROM credentials WHERE user_id=?",u.userId)]);
+   const photos=await all("SELECT id FROM uploads WHERE owner=?",u.userId);
    if(ctx.bucket)await Promise.all(photos.map((p:any)=>ctx.bucket!.delete(p.id)));
    await db.batch([
     stmt("DELETE FROM audit WHERE record IN (SELECT id FROM records WHERE owner=?)",u.userId),
@@ -168,6 +178,8 @@ export async function handle(req:Request,ctx:Context):Promise<Response> {
   return json({error:"Endpoint not found."},404);
  }catch(e) {
   const err=e as Error & {status?:number};
+  if(/community_name_lga/i.test(err.message))return json({error:"This workspace name is already registered in this LGA."},409);
+  if(/UNIQUE.*credentials/i.test(err.message))return json({error:"Unable to register this email. Try signing in instead."},409);
   if(!err.status && /SQLITE|D1_|database|no such table/i.test(err.message)){console.error("Database request failed",err.message);return json({error:"Service temporarily unavailable."},503);}
   return json({error:err.message||"Request failed."},err.status||400);
  }

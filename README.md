@@ -103,3 +103,28 @@ each run. Browser checks include 320px, 390px, 768px and 1440px layouts.
 ## Languages
 
 Use the language menu for Hausa/Igbo navigation and open **Translator** for text translation across 22 languages. Supported pairs use the free MyMemory service. Idoma and Tiv use approved contributions from fluent community members; missing translations invite a contribution. Public listing details also offer translation. See [translation behavior, privacy and checks](docs/translation.md).
+
+## Schools, streets and community workspaces
+
+Create a personal account through **Sign in → Create account**, then use **Schools & communities → Register a workspace**. Register a school, street or community under its own name, LGA, public area and description. The creator is its owner and first posting admin; registration stays private until the platform super admin approves it.
+
+Owners can assign up to **10 admins including themselves**, using the person's already registered account email. Delegated admins publish/edit/remove notices, events, opportunities and updates in their own workspaces. They cannot approve platform registrations or add admins elsewhere. Owners can remove admins, transfer ownership to an existing admin, or delete a workspace. The database enforces the 10-admin cap even for concurrent requests.
+
+Approved workspace updates appear in their local feed, the **Schools & communities** shared feed, and a preview on the general **Action board**. Suspended workspaces disappear from public feeds and cannot publish. Public feeds omit account emails and credentials; this is a public notice system, not a private student records portal.
+
+### Super-admin login
+
+Build locally, then provision an administrator on the server:
+
+```sh
+npm run build:local
+node scripts/create-super-admin.mjs --email owner@example.com --name "Platform owner"
+```
+
+Enter the password at the hidden prompt. The command writes a salted password hash to the ignored local database, grants the super-admin role and revokes existing password sessions. Accounts and passwords are never seeded in Git. Use the normal email/password login form, then open **Platform admin** to approve, reject or suspend workspace registrations.
+
+Native accounts use PBKDF2-SHA256 with a random salt and 100,000 iterations, plus opaque, hashed, seven-day session records and HttpOnly/SameSite=Lax cookies (`Secure` on HTTPS). Authentication checks same-origin requests and enforces per-email and shared app limits. Email ownership verification, password recovery and multi-factor authentication are further deployment work; unverified account emails never grant platform-admin access. ChatGPT dispatch identities remain an optional trusted sign-in path. On hosted deployments, configure verified platform admin identities or provision roles through the secured database administration workflow; the local provisioning command targets the local SQLite database.
+
+The new schema is in migrations 0001 and 0002; apply both when deploying existing D1 instances. Local startup applies them automatically. Existing records and translation features remain available.
+
+Checks: 43 unit/API tests, type checking, lint, both builds, the original reporting and translation browser journeys, and `scripts/workspaces-check.py` (native signup, super-admin login, school registration/review, delegated posting, public feed and mobile layouts). The CLI and actual password hashes stay server-side.

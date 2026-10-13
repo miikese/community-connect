@@ -17,8 +17,10 @@ const bucket={async put(key,bytes){writeFileSync(state+"/uploads/"+key,bytes);},
 const sessions=new Set();
 const mime={".html":"text/html",".js":"text/javascript",".css":"text/css",".svg":"image/svg+xml",".png":"image/png",".json":"application/json",".webmanifest":"application/manifest+json",".woff2":"font/woff2"};
 createServer(async(req,res)=>{
- const origin="http://127.0.0.1:"+port,u=new URL(req.url,origin),host=req.headers.host||"";
+ const host=req.headers.host||"";
  if(host!=="127.0.0.1:"+port && host!=="localhost:"+port){res.writeHead(403);res.end("Loopback access only");return;}
+ const origin="http://"+host,u=new URL(req.url,origin);
+ if(u.origin!==origin){res.writeHead(403);res.end("Invalid request origin");return;}
  try{
   if(u.pathname==="/signin-with-chatgpt"||u.pathname==="/signout-with-chatgpt"){
    if(req.headers["sec-fetch-site"]==="cross-site"){res.writeHead(403);res.end("Local sign-in requires same-origin navigation");return;}

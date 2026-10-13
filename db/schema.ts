@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 export const records = sqliteTable("records", {
  id: text("id").primaryKey(), kind: text("kind").notNull(), owner: text("owner").notNull(),
  status: text("status").notNull(), data: text("data").notNull(), created: text("created").notNull(), updated: text("updated").notNull(),
@@ -9,3 +9,8 @@ export const audit = sqliteTable("audit", {id:text("id").primaryKey(),record:tex
 export const notifications = sqliteTable("notifications", {id:text("id").primaryKey(),owner:text("owner").notNull(),message:text("message").notNull(),read:integer("read").notNull().default(0),created:text("created").notNull()});
 export const uploads = sqliteTable("uploads", {id:text("id").primaryKey(),owner:text("owner").notNull(),mime:text("mime").notNull(),created:text("created").notNull()});
 export const limits = sqliteTable("limits", {id:text("id").primaryKey(),count:integer("count").notNull()});
+export const credentials=sqliteTable("credentials",{userId:text("user_id").primaryKey().references(()=>users.id,{onDelete:"cascade"}),email:text("email").notNull(),passwordHash:text("password_hash").notNull()},t=>[uniqueIndex("credentials_email").on(t.email)]);
+export const accountSessions=sqliteTable("account_sessions",{id:text("id").primaryKey(),userId:text("user_id").notNull().references(()=>users.id,{onDelete:"cascade"}),expires:integer("expires").notNull()});
+export const communities=sqliteTable("communities",{id:text("id").primaryKey(),name:text("name").notNull(),type:text("type").notNull(),lga:text("lga").notNull(),area:text("area").notNull(),description:text("description").notNull(),owner:text("owner").notNull(),status:text("status").notNull().default("pending"),reviewNote:text("review_note").notNull().default(""),created:text("created").notNull(),updated:text("updated").notNull()});
+export const communityAdmins=sqliteTable("community_admins",{id:text("id").primaryKey(),community:text("community").notNull().references(()=>communities.id,{onDelete:"cascade"}),user:text("user").notNull().references(()=>users.id,{onDelete:"cascade"}),created:text("created").notNull()},t=>[uniqueIndex("community_admin_user").on(t.community,t.user)]);
+export const communityPosts=sqliteTable("community_posts",{id:text("id").primaryKey(),community:text("community").notNull().references(()=>communities.id,{onDelete:"cascade"}),author:text("author").notNull(),title:text("title").notNull(),content:text("content").notNull(),category:text("category").notNull(),status:text("status").notNull().default("published"),created:text("created").notNull(),updated:text("updated").notNull()});

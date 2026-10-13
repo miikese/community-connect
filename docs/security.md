@@ -40,3 +40,9 @@ glob/parser and build/migration utilities. A glob parser has no patched release
 available. Build only trusted source and keep development servers on loopback.
 A supported toolchain upgrade remains an explicit release task; do not describe
 the entire dependency tree as clean. See PRODUCT_PLAN.md for the roadmap.
+
+## Named workspaces and native accounts
+
+Workspace administrators are separate from platform super administrators. Membership is checked on every write. Only the owner or super admin can manage a workspace's admins; a SQLite trigger limits each workspace to 10, including its owner. Native account registration cannot request administrative roles. Unverified native email addresses are excluded from trusted dispatch email-based administrator matching.
+
+Opaque password sessions are hashed before database storage, expire after seven days, and are deleted on logout/account deletion or server-side reprovisioning. Native passwords use a salted PBKDF2-SHA256 derivation; hashes and sessions never appear in API responses. Same-origin authentication writes and bounded payloads are enforced. Deploy over HTTPS, add email verification/recovery and MFA for a broad public launch, and retain the admin-limit trigger when changing the membership schema. No default admin credentials are committed.
