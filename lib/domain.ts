@@ -1,6 +1,7 @@
+import {language} from "./languages";
 export const LGAS=["Ado","Agatu","Apa","Buruku","Gboko","Guma","Gwer East","Gwer West","Katsina-Ala","Konshisha","Kwande","Logo","Makurdi","Obi","Ogbadibo","Ohimini","Oju","Okpokwu","Otukpo","Tarka","Ukum","Ushongo","Vandeikya"];
 export const categories:Record<string,string[]>={issue:["Road","Water","Streetlight","Drainage","Waste","Environment","Public facility","Other"],opportunity:["Volunteer","Job","Apprenticeship","Scholarship","Training","Internship","Event","Workshop"],skill:["Programming","Mathematics","Computer literacy","Graphic design","Tailoring","Electrical work","Carpentry","Agriculture","Entrepreneurship"],lost:["Lost","Found"],announcement:["Meeting","Program","Public notice","Cleanup","Education"],assistance:["Education","Food","Volunteer help","Public infrastructure","Other"],organization:["Community group","Nonprofit","Business","Education"]};
-export const publicKinds=Object.keys(categories),privateKinds=["profile"],publicStatuses=["approved","verified","acknowledged","in-progress","resolved","closed"];
+export const publicKinds=[...Object.keys(categories),"translation"],privateKinds=["profile"],publicStatuses=["approved","verified","acknowledged","in-progress","resolved","closed"];
 export const initialStatus=(kind:string)=>kind==="issue"?"submitted":kind==="profile"?"private":"pending";
 export function text(v:unknown,name:string,min=1,max=200){if(typeof v!=="string"||v.trim().length<min||v.trim().length>max)throw new Error(name+" must be "+min+"–"+max+" characters.");return v.trim();}
 export function coordinates(lat:unknown,lng:unknown){if(typeof lat!=="number"||typeof lng!=="number"||!Number.isFinite(lat)||!Number.isFinite(lng)||lat<6.3||lat>8.6||lng<7.2||lng>10.1)throw new Error("Choose coordinates in the Benue region.");return{lat:Math.round(lat*100)/100,lng:Math.round(lng*100)/100};}
@@ -10,6 +11,12 @@ export function validDate(value:string) {
  return Number.isFinite(date.getTime()) && date.toISOString().slice(0,10)===value;
 }
 export function validate(kind:string,d:Record<string,unknown>):Record<string,any>{
+ if(kind==="translation"){
+  const original=text(d.original,"Original text",1,2000),translated=text(d.translated,"Translation",1,2000),sourceLanguage=String(d.sourceLanguage),targetLanguage=String(d.targetLanguage);
+  if(!language(sourceLanguage)||!language(targetLanguage)||sourceLanguage===targetLanguage)throw new Error("Choose two different supported languages.");
+  if(new TextEncoder().encode(original).length>2500)throw new Error("Original text is too long.");
+  return{original,translated,sourceLanguage,targetLanguage,title:original.slice(0,140),description:translated,category:language(targetLanguage)!.name,source:"Community translation"};
+ }
  if(kind==="profile"){if(!LGAS.includes(String(d.lga)))throw new Error("Choose a valid LGA.");return{name:text(d.name,"Display nickname",2,60),interests:text(d.interests,"Interests",2,400),lga:LGAS.includes(String(d.lga))?d.lga:"Otukpo",private:true};}
  if(!publicKinds.includes(kind))throw new Error("Choose a supported listing type.");
  if(!LGAS.includes(String(d.lga)))throw new Error("Choose a valid LGA.");

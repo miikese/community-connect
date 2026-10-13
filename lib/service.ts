@@ -1,9 +1,10 @@
+import {translate,type TranslationOptions} from "./translation";
 import * as domain from "./domain";
 export type Identity = {userId:string;displayName:string;email?:string}|null;
 export type Stored = {id:string;kind:string;owner:string;status:string;data:string;created:string;updated:string};
 type BindValue = string|number|null;
 export type DB = {prepare(sql:string):{bind(...values:BindValue[]):any;first<T=any>():Promise<T|null>;all<T=any>():Promise<{results:T[]}>;run():Promise<any>};batch(statements:any[]):Promise<any>};
-export type Context = {db:DB;user:Identity;adminIds:string[];adminEmails?:string[];bucket?:R2Bucket;seed?:{id:string;kind:string;status:string;data:Record<string,unknown>}[]};
+export type Context = {db:DB;user:Identity;adminIds:string[];adminEmails?:string[];bucket?:R2Bucket;translation?:TranslationOptions;seed?:{id:string;kind:string;status:string;data:Record<string,unknown>}[]};
 export function json(value:unknown,status=200) {
  return new Response(JSON.stringify(value),{status,headers:{"content-type":"application/json","cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"strict-origin-when-cross-origin"}});
 }
@@ -31,6 +32,12 @@ export async function handle(req:Request,ctx:Context):Promise<Response> {
  const signed=()=>{if(!user)error("Sign in to continue.",401);return user!;};
  const admin=async()=>{const u=signed();const r=await stmt("SELECT role FROM users WHERE id=?",u.userId).first();if(!ctx.adminIds.includes(u.userId)&&!(u.email&&ctx.adminEmails?.includes(u.email.toLowerCase()))&&r?.role!=="admin"&&r?.role!=="moderator")error("Moderator access required.",403);return u;};
  try {
+  if(path==="translate" && req.method==="POST") {
+   if(req.headers.get("origin") && req.headers.get("origin")!==url.origin)error("Cross-origin writes are not allowed.",403);
+   const key="translation:"+Math.floor(Date.now()/60000),limit=await stmt("INSERT INTO limits(id,count) VALUES(?,1) ON CONFLICT(id) DO UPDATE SET count=count+1 RETURNING count",key).first();
+   if(limit.count>12)error("Translation is busy. Please try again in a minute.",429);
+   const d=await body(req);return json(await translate(d.text,d.source,d.target,db,ctx.translation));
+  }
   if(req.method!=="GET" && req.method!=="HEAD") {
    const origin=req.headers.get("origin");
    if(origin && origin!==url.origin) error("Cross-origin writes are not allowed.",403);

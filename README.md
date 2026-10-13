@@ -99,3 +99,7 @@ your saved data. The default remains `.local-state`; existing records are preser
 For example, use `APP_STATE_DIR=/tmp/community-connect-qa npm run local`,
 then run `python3 scripts/e2e.py` in another terminal. Use a fresh directory for
 each run. Browser checks include 320px, 390px, 768px and 1440px layouts.
+
+## Languages
+
+Use the language menu for Hausa/Igbo navigation and open **Translator** for text translation across 22 languages. Supported pairs use the free MyMemory service. Idoma and Tiv use approved contributions from fluent community members; missing translations invite a contribution. Public listing details also offer translation. See [translation behavior, privacy and checks](docs/translation.md).

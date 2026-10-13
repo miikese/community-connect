@@ -40,7 +40,7 @@ createServer(async(req,res)=>{
      const d=await r.json();if(!r.ok||d.code!=="Ok"||!d.routes?.length)throw new Error("No route found");
      const route=d.routes[0];response=Response.json({distance:route.distance,duration:route.duration,geometry:route.geometry,steps:route.legs.flatMap(l=>l.steps)});
     }catch{response=Response.json({error:"Routing is unavailable. Use Open directions to view a supported provider."},{status:503});}
-   }else response=await handle(request,{db,user,adminIds:["local_seedy"],bucket});
+   }else response=await handle(request,{db,user,adminIds:["local_seedy"],bucket,translation:{apiKey:process.env.MYMEMORY_API_KEY}});
    res.writeHead(response.status,Object.fromEntries(response.headers));res.end(Buffer.from(await response.arrayBuffer()));return;
   }
   const file=resolve(assets,"."+decodeURIComponent(u.pathname));
