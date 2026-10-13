@@ -23,7 +23,7 @@ with sync_playwright() as p:
   public.goto(base+'/?section=communities&community='+workspace);public.get_by_role('heading',name='Workspace QA shared update '+marker,exact=True).wait_for();assert public.get_by_role('button',name='Publish an update',exact=True).count()==0
   for page in pages:
    for width in [320,390,768]:
-    page.set_viewport_size({'width':width,'height':844});assert page.evaluate('document.documentElement.scrollWidth<=innerWidth'),(page.url,width)
+    page.set_viewport_size({'width':width,'height':844});page.wait_for_timeout(250);assert page.evaluate('document.documentElement.scrollWidth<=innerWidth'),(page.url,width,page.evaluate("Array.from(document.querySelectorAll('*')).filter(e=>e.getBoundingClientRect().right>innerWidth+1).map(e=>({tag:e.tagName,classes:e.className,right:e.getBoundingClientRect().right})).slice(0,15)"))
   assert not errors,errors;print('PASS: native signup/super-admin login, private school registration, platform approval, delegate assignment, scoped publishing, public aggregate feed, public privacy and mobile layouts; zero browser errors')
  finally:
   if workspace:owner.request.delete(base+'/api/communities/'+workspace)
