@@ -1,4 +1,5 @@
 import {accountAuth,accountSession} from "./account-auth";
+import {socialRoute} from "./social-service";
 import {communityRoute} from "./communities";
 import {translate,type TranslationOptions} from "./translation";
 import * as domain from "./domain";
@@ -6,7 +7,7 @@ export type Identity = {userId:string;displayName:string;email?:string;passwordA
 export type Stored = {id:string;kind:string;owner:string;status:string;data:string;created:string;updated:string};
 type BindValue = string|number|null;
 export type DB = {prepare(sql:string):{bind(...values:BindValue[]):any;first<T=any>():Promise<T|null>;all<T=any>():Promise<{results:T[]}>;run():Promise<any>};batch(statements:any[]):Promise<any>};
-export type Context = {db:DB;user:Identity;adminIds:string[];adminEmails?:string[];bucket?:R2Bucket;translation?:TranslationOptions;seed?:{id:string;kind:string;status:string;data:Record<string,unknown>}[]};
+export type Context = {db:DB;user:Identity;adminIds:string[];adminEmails?:string[];bucket?:R2Bucket;translation?:TranslationOptions;rtc?:{urls?:string;secret?:string};seed?:{id:string;kind:string;status:string;data:Record<string,unknown>}[]};
 export function json(value:unknown,status=200) {
  return new Response(JSON.stringify(value),{status,headers:{"content-type":"application/json","cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"strict-origin-when-cross-origin"}});
 }
@@ -17,9 +18,9 @@ async function boundedBytes(req:Request,max:number) {
  while(true){const {done,value}=await reader.read();if(done)break;total+=value.length;if(total>max){await reader.cancel();error("Submission too large.",413);}chunks.push(value);}
  const bytes=new Uint8Array(total);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}return bytes;
 }
-async function body(req:Request) {
+async function body(req:Request,max=12000) {
  if(!req.headers.get("content-type")?.startsWith("application/json")) error("Send JSON.",415);
- const raw=new TextDecoder().decode(await boundedBytes(req,12000));
+ const raw=new TextDecoder().decode(await boundedBytes(req,max));
  try {const d=JSON.parse(raw);if(!d || Array.isArray(d) || typeof d!=="object") error("Invalid object.");return d;}catch{error("Invalid JSON.");}
 }
 export function serialize(row:Stored,privateView=false) {
@@ -49,11 +50,13 @@ export async function handle(req:Request,ctx:Context):Promise<Response> {
    const origin=req.headers.get("origin");
    if(origin && origin!==url.origin) error("Cross-origin writes are not allowed.",403);
    signed();
-   const key=user!.userId+":"+Math.floor(Date.now()/60000);
+   const chat=path==="social/messages";
+   const key=user!.userId+(chat?":chat:":":")+Math.floor(Date.now()/60000);
    const limit=await stmt("INSERT INTO limits(id,count) VALUES(?,1) ON CONFLICT(id) DO UPDATE SET count=count+1 RETURNING count",key).first();
-   if(limit.count>35)error("Please wait a minute before trying again.",429);
+   if(limit.count>(path==="social/messages"?90:35))error("Please wait a minute before trying again.",429);
    if(Math.random()<0.02) await stmt("DELETE FROM limits WHERE id NOT LIKE ?", "%:"+Math.floor(Date.now()/60000)).run();
   }
+  const social=await socialRoute(req,{...ctx,user},()=>body(req,70000),json);if(social)return social;
   const communityResponse=await communityRoute(req,{...ctx,user},()=>body(req),json);if(communityResponse)return communityResponse;
   if(path==="seed" && req.method==="POST") {
    await admin();const seed=ctx.seed||[];if(seed.length)await db.batch(seed.map(r=>stmt("INSERT OR IGNORE INTO records(id,kind,owner,status,data,created,updated) VALUES(?,?,?,?,?,?,?)",r.id,r.kind,"osm-import",r.status,JSON.stringify(r.data),now,now)));return json({imported:seed.length});
