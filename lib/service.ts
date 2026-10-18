@@ -1,4 +1,4 @@
-import {accountAuth,accountSession} from "./account-auth";
+import {accountAuth,accountSession,type OwnerSettings} from "./account-auth";
 import {socialRoute} from "./social-service";
 import {communityRoute} from "./communities";
 import {translate,type TranslationOptions} from "./translation";
@@ -7,7 +7,7 @@ export type Identity = {userId:string;displayName:string;email?:string;passwordA
 export type Stored = {id:string;kind:string;owner:string;status:string;data:string;created:string;updated:string};
 type BindValue = string|number|null;
 export type DB = {prepare(sql:string):{bind(...values:BindValue[]):any;first<T=any>():Promise<T|null>;all<T=any>():Promise<{results:T[]}>;run():Promise<any>};batch(statements:any[]):Promise<any>};
-export type Context = {db:DB;user:Identity;adminIds:string[];adminEmails?:string[];bucket?:R2Bucket;translation?:TranslationOptions;rtc?:{urls?:string;secret?:string};seed?:{id:string;kind:string;status:string;data:Record<string,unknown>}[]};
+export type Context = {db:DB;user:Identity;adminIds:string[];adminEmails?:string[];bucket?:R2Bucket;owner?:OwnerSettings;translation?:TranslationOptions;rtc?:{urls?:string;secret?:string};seed?:{id:string;kind:string;status:string;data:Record<string,unknown>}[]};
 export function json(value:unknown,status=200) {
  return new Response(JSON.stringify(value),{status,headers:{"content-type":"application/json","cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"strict-origin-when-cross-origin"}});
 }
@@ -28,7 +28,7 @@ export function serialize(row:Stored,privateView=false) {
  return {...safe,...(privateView?{owner}:{}),data:JSON.parse(row.data)};
 }
 export async function handle(req:Request,ctx:Context):Promise<Response> {
- const {db}=ctx,user=await accountSession(req,db)||ctx.user,url=new URL(req.url),path=url.pathname.replace(/^\/api\/?/,""),now=new Date().toISOString();
+ const {db}=ctx,user=await accountSession(req,db,ctx.owner)||ctx.user,url=new URL(req.url),path=url.pathname.replace(/^\/api\/?/,""),now=new Date().toISOString();
  const id=()=>crypto.randomUUID();
  const stmt=(sql:string,...args:BindValue[])=>db.prepare(sql).bind(...args);
  const all=async(sql:string,...args:BindValue[])=>(await stmt(sql,...args).all()).results;
@@ -37,7 +37,7 @@ export async function handle(req:Request,ctx:Context):Promise<Response> {
  try {
   if(path.startsWith("auth/")&&req.method==="POST"){
    if((req.headers.get("origin")&&req.headers.get("origin")!==url.origin)||req.headers.get("sec-fetch-site")==="cross-site")error("Cross-origin authentication is not allowed.",403);
-   return await accountAuth(req,db,path,path==="auth/logout"?{}:await body(req));
+   return await accountAuth(req,db,path,path==="auth/logout"?{}:await body(req),ctx.owner);
   }
   if(path==="auth/status"&&req.method==="GET")return json({user});
   if(path==="translate" && req.method==="POST") {

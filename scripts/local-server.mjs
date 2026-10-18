@@ -3,6 +3,8 @@ import {createServer} from "node:http";
 import {DatabaseSync} from "node:sqlite";
 import {readFileSync,writeFileSync,existsSync,mkdirSync,readdirSync,unlinkSync} from "node:fs";
 import {resolve,extname} from "node:path";
+import {loadEnvFile} from "node:process";
+if(existsSync(process.env.APP_ENV_FILE||".env.local"))loadEnvFile(process.env.APP_ENV_FILE||".env.local");
 import {randomBytes} from "node:crypto";
 import {handle,coordinates} from "../.local-build/service.mjs";
 const port=Number(process.env.PORT||3103),state=resolve(process.env.APP_STATE_DIR||".local-state"),assets=resolve(".local-build/client");
@@ -42,7 +44,7 @@ createServer(async(req,res)=>{
      const d=await r.json();if(!r.ok||d.code!=="Ok"||!d.routes?.length)throw new Error("No route found");
      const route=d.routes[0];response=Response.json({distance:route.distance,duration:route.duration,geometry:route.geometry,steps:route.legs.flatMap(l=>l.steps)});
     }catch{response=Response.json({error:"Routing is unavailable. Use Open directions to view a supported provider."},{status:503});}
-   }else response=await handle(request,{db,user,adminIds:["local_seedy"],bucket,translation:{apiKey:process.env.MYMEMORY_API_KEY},rtc:{urls:process.env.RTC_TURN_URLS,secret:process.env.RTC_TURN_SECRET}});
+   }else response=await handle(request,{db,user,owner:{email:process.env.OWNER_EMAIL,passwordHash:process.env.OWNER_PASSWORD_HASH},adminIds:["local_seedy"],bucket,translation:{apiKey:process.env.MYMEMORY_API_KEY},rtc:{urls:process.env.RTC_TURN_URLS,secret:process.env.RTC_TURN_SECRET}});
    res.writeHead(response.status,Object.fromEntries(response.headers));res.end(Buffer.from(await response.arrayBuffer()));return;
   }
   const file=resolve(assets,"."+decodeURIComponent(u.pathname));

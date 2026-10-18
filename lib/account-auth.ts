@@ -1,4 +1,5 @@
 import type { DB, Identity } from "./service";
+export type OwnerSettings={email?:string;passwordHash?:string};
 const encoder = new TextEncoder();
 const hex = (bytes: Uint8Array) =>
   Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -42,7 +43,7 @@ export const sessionHash = async (value: string) =>
       await crypto.subtle.digest("SHA-256", encoder.encode(value)),
     ),
   );
-export async function accountSession(req: Request, db: DB): Promise<Identity> {
+export async function accountSession(req: Request, db: DB, owner:OwnerSettings={}): Promise<Identity> {
   const token = req.headers
     .get("cookie")
     ?.split(";")
@@ -52,10 +53,11 @@ export async function accountSession(req: Request, db: DB): Promise<Identity> {
   if (!token || !/^[a-f0-9]{64}$/.test(token)) return null;
   const row = await db
     .prepare(
-      "SELECT u.id,u.name,c.email FROM account_sessions s JOIN credentials c ON c.user_id=s.user_id JOIN users u ON u.id=c.user_id WHERE s.id=? AND s.expires>?",
+      "SELECT u.id,u.name,c.email,c.password_hash FROM account_sessions s JOIN credentials c ON c.user_id=s.user_id JOIN users u ON u.id=c.user_id WHERE s.id=? AND s.expires>?",
     )
     .bind(await sessionHash(token), Date.now())
     .first();
+  if(row&&owner.email?.trim().toLowerCase()===row.email&&owner.passwordHash!==row.password_hash)return null;
   return row
     ? {
         userId: row.id,
@@ -73,6 +75,7 @@ export async function accountAuth(
   db: DB,
   path: string,
   data: Record<string, unknown>,
+  owner:OwnerSettings={},
 ) {
   const now = Date.now(),
     secure = new URL(req.url).protocol === "https:" ? "; Secure" : "";
@@ -125,7 +128,9 @@ export async function accountAuth(
       .first();
   if (limit.count > 8) fail("Please wait a minute before trying again.", 429);
   let user: any;
+  const configuredOwner=!!owner.email&&email===owner.email.trim().toLowerCase();
   if (path === "auth/register") {
+    if(configuredOwner)fail("This email is reserved for the configured owner. Use Sign in.",403);
     const name = typeof data.name === "string" ? data.name.trim() : "";
     if (name.length < 2 || name.length > 80)
       fail("Enter a display name between 2 and 80 characters.");
@@ -151,6 +156,17 @@ export async function accountAuth(
         .bind(id, email, hash),
     ]);
     user = { id, name, role: "member" };
+  } else if (path === "auth/login"&&configuredOwner) {
+    if(!owner.passwordHash||!/^pbkdf2-sha256:100000:[a-f0-9]{32}:[a-f0-9]{64}$/.test(owner.passwordHash))fail("Owner sign-in needs valid private runtime settings.",503);
+    if(!await verify(password,owner.passwordHash))fail("Invalid email or password.",401);
+    const prior=await db.prepare("SELECT user_id,password_hash FROM credentials WHERE email=?").bind(email).first(),id=prior?.user_id||crypto.randomUUID(),changed=prior?.password_hash!==owner.passwordHash;
+    await db.batch([
+      db.prepare("INSERT INTO users(id,name,role) VALUES(?,'Platform owner','super-admin') ON CONFLICT(id) DO UPDATE SET role='super-admin'").bind(id),
+      db.prepare("INSERT INTO credentials(user_id,email,password_hash) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET password_hash=excluded.password_hash").bind(id,email,owner.passwordHash),
+      ...(changed?[db.prepare("DELETE FROM account_sessions WHERE user_id=?").bind(id)]:[])
+    ]);
+    const record=await db.prepare("SELECT name FROM users WHERE id=?").bind(id).first();
+    user={id,name:record.name,role:"super-admin"};
   } else if (path === "auth/login") {
     const row = await db
       .prepare(

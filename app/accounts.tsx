@@ -28,9 +28,9 @@ export function AccountPage() {
             setMessage("");
             const fd = new FormData(e.currentTarget);
             try {
-              await api("auth/" + mode, "POST", Object.fromEntries(fd));
+              const result=await api("auth/" + mode, "POST", Object.fromEntries(fd));
               location.assign(
-                new URL("/?section=communities", location.origin).href,
+                new URL(result.user?.role==="super-admin"?"/?section=platform":"/?section=communities", location.origin).href,
               );
             } catch (e) {
               setMessage((e as Error).message);
