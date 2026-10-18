@@ -2,14 +2,17 @@
 import {useEffect,useRef,useState} from "react";
 import {Mic,MicOff,Phone,PhoneOff,Video,VideoOff,Volume2,X} from "lucide-react";
 import {api} from "../lib/client";
+import {GroupCallDock} from "./group-calls";
+import {claimMediaSession,releaseMediaSession} from "../lib/media-session";
 import {Avatar,type Person} from "./social";
 type Call={id:string;caller?:string;callee?:string;mode:"voice"|"video";status:string;offer?:string;answer?:string;incoming:boolean;peer:Person};
 async function gathered(pc:RTCPeerConnection){if(pc.iceGatheringState==="complete")return;await new Promise<void>(resolve=>{const finish=()=>{clearTimeout(timer);pc.removeEventListener("icegatheringstatechange",changed);resolve()},changed=()=>{if(pc.iceGatheringState==="complete")finish()},timer=setTimeout(finish,8000);pc.addEventListener("icegatheringstatechange",changed)});}
-export function CallDock(){
+export function CallDock(){return <><DirectCallDock/><GroupCallDock/></>}
+function DirectCallDock(){
  const [call,setCall]=useState<Call|null>(null),[phase,setPhase]=useState(""),[connection,setConnection]=useState<RTCPeerConnectionState>("new"),[error,setError]=useState(""),[local,setLocal]=useState<MediaStream|null>(null),[remote,setRemote]=useState<MediaStream|null>(null),[muted,setMuted]=useState(false),[camera,setCamera]=useState(true),[seconds,setSeconds]=useState(0),[audioBlocked,setAudioBlocked]=useState(false),[relay,setRelay]=useState(true);
  const current=useRef<Call|null>(null),pc=useRef<RTCPeerConnection|null>(null),stream=useRef<MediaStream|null>(null),remoteVideo=useRef<HTMLVideoElement>(null),version=useRef(0),operation=useRef(false),polling=useRef(false),connectedAt=useRef(0),disconnect=useRef<ReturnType<typeof setTimeout>|null>(null),alive=useRef(true),authorized=useRef(false),pollRef=useRef<()=>Promise<void>>(async()=>{});
  const assign=(c:Call|null)=>{current.current=c;if(alive.current)setCall(c)};
- const cleanup=()=>{version.current++;operation.current=false;if(disconnect.current)clearTimeout(disconnect.current);disconnect.current=null;const old=pc.current;pc.current=null;if(old){old.onconnectionstatechange=null;old.ontrack=null;old.close()}stream.current?.getTracks().forEach(t=>t.stop());stream.current=null;if(alive.current){setLocal(null);setRemote(null);setMuted(false);setCamera(true);setAudioBlocked(false);setConnection("closed");setSeconds(0)}connectedAt.current=0;assign(null)};
+ const cleanup=()=>{if(current.current)releaseMediaSession(current.current.id);version.current++;operation.current=false;if(disconnect.current)clearTimeout(disconnect.current);disconnect.current=null;const old=pc.current;pc.current=null;if(old){old.onconnectionstatechange=null;old.ontrack=null;old.close()}stream.current?.getTracks().forEach(t=>t.stop());stream.current=null;if(alive.current){setLocal(null);setRemote(null);setMuted(false);setCamera(true);setAudioBlocked(false);setConnection("closed");setSeconds(0)}connectedAt.current=0;assign(null)};
  const finish=async(action="end",message="")=>{const c=current.current;cleanup();if(message&&alive.current)setError(message);if(c)try{await api("social/calls","PATCH",{id:c.id,action})}catch{if(alive.current&&message)setError(message)}};
  const media=async(c:Call,token:number)=>{
   if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia)throw new Error("Calls need HTTPS or localhost and a browser with microphone support.");
@@ -23,7 +26,7 @@ export function CallDock(){
  };
  const friendly=(e:unknown)=>{const err=e as Error;return ["NotAllowedError","PermissionDeniedError"].includes(err.name)?"Microphone or camera permission was declined. Allow access in your browser settings, then try again.":err.name==="NotFoundError"?"A microphone or camera could not be found. Check your device and try again.":err.message||"The call could not start."};
  const start=async(peer:Person,mode:"voice"|"video")=>{
-  if(current.current||operation.current){setError("Finish or decline your current call before starting another.");return}operation.current=true;setError("");const token=++version.current,c:Call={id:crypto.randomUUID(),peer,mode,status:"preparing",incoming:false};assign(c);setPhase("Requesting device access…");setConnection("new");
+  if(current.current||operation.current){setError("Finish or decline your current call before starting another.");return}operation.current=true;setError("");const token=++version.current,c:Call={id:crypto.randomUUID(),peer,mode,status:"preparing",incoming:false};if(!claimMediaSession(c.id)){operation.current=false;setError("Finish your current group call or recording before starting another call.");return}assign(c);setPhase("Requesting device access…");setConnection("new");
   try{const peerConnection=await media(c,token);await peerConnection.setLocalDescription(await peerConnection.createOffer());setPhase("Preparing a secure connection…");await gathered(peerConnection);if(token!==version.current)return;await api("social/calls","POST",{id:c.id,peer:peer.user_id,mode,offer:peerConnection.localDescription?.sdp});if(token!==version.current){void api("social/calls","PATCH",{id:c.id,action:"end"}).catch(()=>{});return}assign({...c,status:"ringing"});setPhase("Calling…")}catch(e){if(token===version.current)await finish("end",friendly(e))}finally{if(token===version.current)operation.current=false}
  };
  const accept=async()=>{
@@ -35,7 +38,7 @@ export function CallDock(){
   try{const d=await api("social/calls"+(before?"?id="+encodeURIComponent(before.id):""));if(token!==version.current||!alive.current)return;
    const c=d.call as Call|null;if(!c){if(before)await finish("end","The call has ended.");return}
    if(!["ringing","accepted"].includes(c.status)){if(before){cleanup();setError(c.status==="declined"?"Your friend declined the call.":c.status==="missed"?"The call wasn’t answered.":"The call has ended.")}return}
-   if(!before){if(c.incoming&&c.status==="ringing"){assign(c);setPhase("Incoming "+c.mode+" call");setConnection("new")}else if(c.status==="accepted"){await api("social/calls","PATCH",{id:c.id,action:"end"})}return}
+   if(!before){if(c.incoming&&c.status==="ringing"){if(!claimMediaSession(c.id)){await api("social/calls","PATCH",{id:c.id,action:"decline"});return}assign(c);setPhase("Incoming "+c.mode+" call");setConnection("new")}else if(c.status==="accepted"){await api("social/calls","PATCH",{id:c.id,action:"end"})}return}
    assign(c);if(c.status==="accepted"&&!c.incoming&&c.answer&&pc.current&&!pc.current.remoteDescription){setPhase("Connecting…");await pc.current.setRemoteDescription({type:"answer",sdp:c.answer})}
   }catch(e){if(before&&alive.current)setError("Call updates are unavailable. Check your connection or end the call.")}finally{polling.current=false}
  };

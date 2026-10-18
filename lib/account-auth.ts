@@ -1,3 +1,4 @@
+import {chooseUsername,ensureSocialIdentity} from "./social-identity";
 import type { DB, Identity } from "./service";
 export type OwnerSettings={email?:string;passwordHash?:string};
 const encoder = new TextEncoder();
@@ -144,7 +145,7 @@ export async function accountAuth(
     )
       fail("Unable to register this email. Try signing in instead.", 409);
     const id = crypto.randomUUID(),
-      hash = await passwordHash(password);
+      hash = await passwordHash(password),username=await chooseUsername(db,data.username);
     await db.batch([
       db
         .prepare("INSERT INTO users(id,name,role) VALUES(?,?,'member')")
@@ -154,6 +155,7 @@ export async function accountAuth(
           "INSERT INTO credentials(user_id,email,password_hash) VALUES(?,?,?)",
         )
         .bind(id, email, hash),
+      db.prepare("INSERT INTO social_profiles(user_id,handle,name,discoverable,created,updated) VALUES(?,?,?,?,?,?)").bind(id,username,name.slice(0,40),data.discoverable===true?1:0,new Date(now).toISOString(),new Date(now).toISOString()),
     ]);
     user = { id, name, role: "member" };
   } else if (path === "auth/login"&&configuredOwner) {
@@ -183,6 +185,8 @@ export async function accountAuth(
     if (!row || !valid) fail("Invalid email or password.", 401);
     user = { id: row.id, name: row.name, role: row.role };
   } else fail("Authentication endpoint not found.", 404);
+  const profile=await ensureSocialIdentity(db,{userId:user.id,displayName:user.name,email});
+  user.username=profile.handle;
   const token = hex(crypto.getRandomValues(new Uint8Array(32)));
   await db
     .prepare("INSERT INTO account_sessions(id,user_id,expires) VALUES(?,?,?)")

@@ -1,3 +1,4 @@
+import {groupBusy} from "./chat-access";
 import type {Context} from "./service";
 const colors=["teal","blue","violet","coral","gold"];
 const fail=(message:string,status=400):never=>{throw Object.assign(new Error(message),{status})};
@@ -32,9 +33,10 @@ export async function socialRoute(req:Request,ctx:Context,read:()=>Promise<any>,
   return json({people});
  }
  if(path==="social/home"&&req.method==="GET"){
-  const relations=await all("SELECT f.id,f.status,f.requester,f.created,p.user_id,p.handle,p.name,p.bio,p.area,p.color,(SELECT COUNT(*) FROM social_messages m WHERE m.sender=p.user_id AND m.recipient=? AND m.read_at IS NULL) AS unread,(SELECT body FROM social_messages m WHERE (m.sender=? AND m.recipient=p.user_id) OR (m.sender=p.user_id AND m.recipient=?) ORDER BY seq DESC LIMIT 1) AS last_message FROM friendships f JOIN social_profiles p ON p.user_id=CASE WHEN f.member_a=? THEN f.member_b ELSE f.member_a END WHERE (f.member_a=? OR f.member_b=?) AND NOT EXISTS(SELECT 1 FROM social_blocks WHERE (blocker=? AND target=p.user_id) OR (blocker=p.user_id AND target=?)) ORDER BY f.updated DESC",id,id,id,id,id,id,id,id);
+  const relations=await all("SELECT f.id,f.status,f.requester,f.created,f.updated,p.user_id,p.handle,p.name,p.bio,p.area,p.color,(SELECT COUNT(*) FROM social_messages m WHERE m.sender=p.user_id AND m.recipient=? AND m.read_at IS NULL) AS unread,(SELECT CASE WHEN kind='voice' THEN 'Voice note' WHEN kind='video' THEN 'Video note' ELSE body END FROM social_messages m WHERE (m.sender=? AND m.recipient=p.user_id) OR (m.sender=p.user_id AND m.recipient=?) ORDER BY seq DESC LIMIT 1) AS last_message,(SELECT unread FROM chat_preferences s WHERE s.owner=? AND s.target='direct:'||p.user_id) AS manual_unread,(SELECT pinned FROM chat_preferences s WHERE s.owner=? AND s.target='direct:'||p.user_id) AS pinned FROM friendships f JOIN social_profiles p ON p.user_id=CASE WHEN f.member_a=? THEN f.member_b ELSE f.member_a END WHERE (f.member_a=? OR f.member_b=?) AND NOT EXISTS(SELECT 1 FROM social_blocks WHERE (blocker=? AND target=p.user_id) OR (blocker=p.user_id AND target=?)) ORDER BY pinned DESC,f.updated DESC",id,id,id,id,id,id,id,id,id,id);
   const blocks=await all("SELECT p.user_id,p.handle,p.name,p.color FROM social_blocks b JOIN social_profiles p ON p.user_id=b.target WHERE b.blocker=?",id);
-  return json({userId:id,profile:await q("SELECT * FROM social_profiles WHERE user_id=?",id).first(),relations,blocks});
+  const groupRows=await all("SELECT (SELECT COUNT(*) FROM chat_messages c WHERE c.thread=m.thread AND c.sender<>? AND c.seq>m.last_read) AS unread,(SELECT unread FROM chat_preferences p WHERE p.owner=? AND p.target='group:'||m.thread) AS manual_unread FROM chat_members m WHERE m.user_id=? AND m.left_at IS NULL",id,id,id);
+  return json({userId:id,profile:await q("SELECT * FROM social_profiles WHERE user_id=?",id).first(),relations,blocks,groupUnread:groupRows.reduce((n,r)=>n+(Number(r.unread)||Number(r.manual_unread)||0),0)});
  }
  if(path==="social/friends"&&["POST","PATCH"].includes(req.method)){
   const d=await read(),peer=text(d.peer,200,1);if(peer===id)fail("Choose another person.");
@@ -61,20 +63,8 @@ export async function socialRoute(req:Request,ctx:Context,read:()=>Promise<any>,
   else await db.batch([q("INSERT OR IGNORE INTO social_blocks(id,blocker,target,created) VALUES(?,?,?,?)",JSON.stringify([id,peer]),id,peer,now),q("DELETE FROM friendships WHERE id=?",pair(peer)),closeCalls(peer)]);
   return json({blocked:d.remove!==true});
  }
- if(path==="social/messages"){
-  if(req.method==="GET"){
-   const peer=url.searchParams.get("peer")||"";await allowed(peer);const after=Number(url.searchParams.get("after")||0),before=Number(url.searchParams.get("before")||0);if(!Number.isSafeInteger(after)||after<0||!Number.isSafeInteger(before)||before<0||after&&before)fail("Invalid message cursor.");
-   const direction=after?"ASC":"DESC",cursor=after||before,filter=cursor?`AND seq ${after?">":"<"} ?`:"",params:(string|number)[]=[id,peer,peer,id];if(cursor)params.push(cursor);
-   const messages=await all(`SELECT seq,id,sender,recipient,body,created,read_at FROM social_messages WHERE ((sender=? AND recipient=?) OR (sender=? AND recipient=?)) ${filter} ORDER BY seq ${direction} LIMIT 50`,...params);if(!after)messages.reverse();return json({messages,hasMore:messages.length===50});
-  }
-  if(req.method==="POST"){
-   const d=await read(),peer=text(d.peer,200,1),body=text(d.body,4000,1),nonce=uuid(d.requestId);await allowed(peer);
-   await q("INSERT OR IGNORE INTO social_messages(id,sender,recipient,body,created) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM friendships WHERE id=? AND status='accepted') AND NOT EXISTS(SELECT 1 FROM social_blocks WHERE (blocker=? AND target=?) OR (blocker=? AND target=?))",nonce,id,peer,body,now,pair(peer),id,peer,peer,id).run();
-   const saved=await q("SELECT * FROM social_messages WHERE sender=? AND id=?",id,nonce).first();if(!saved)fail("This conversation is no longer available.",403);if(saved.recipient!==peer||saved.body!==body)fail("This message request was already used.",409);return json({message:saved},201);
-  }
- }
  if(path==="social/read"&&req.method==="POST"){
-  const d=await read(),peer=text(d.peer,200,1);await allowed(peer);if(!Number.isSafeInteger(d.through)||d.through<0)fail("Invalid message cursor.");await q("UPDATE social_messages SET read_at=? WHERE sender=? AND recipient=? AND seq<=? AND read_at IS NULL",now,peer,id,d.through).run();return json({read:true});
+  const d=await read(),peer=text(d.peer,200,1);await allowed(peer);if(!Number.isSafeInteger(d.through)||d.through<0)fail("Invalid message cursor.");await q("UPDATE social_messages SET read_at=? WHERE sender=? AND recipient=? AND seq<=? AND read_at IS NULL",now,peer,id,d.through).run();await q("UPDATE chat_preferences SET unread=0 WHERE owner=? AND target=?",id,"direct:"+peer).run();return json({read:true});
  }
  if(path==="social/ice"&&req.method==="GET"){
   const iceServers:any[]=[{urls:"stun:stun.l.google.com:19302"}];let relay=false;
@@ -88,7 +78,7 @@ export async function socialRoute(req:Request,ctx:Context,read:()=>Promise<any>,
    if(!row)return json({call:null});const peer=row.caller===id?row.callee:row.caller;if(await blocked(peer))return json({call:null});return json({call:{...row,peer:await peerProfile(peer),incoming:row.callee===id}});
   }
   if(req.method==="POST"){
-   const d=await read(),peer=text(d.peer,200,1),callId=uuid(d.id);await allowed(peer);if(!["voice","video"].includes(d.mode))fail("Choose voice or video.");const offer=sdp(d.offer);if(!offer.startsWith("v=0")||!offer.includes("m=audio")||d.mode==="video"&&!offer.includes("m=video"))fail("Invalid call offer.");
+   const d=await read(),peer=text(d.peer,200,1),callId=uuid(d.id);await allowed(peer);if(!["voice","video"].includes(d.mode))fail("Choose voice or video.");if(await groupBusy(db,id)||await groupBusy(db,peer))fail("One of you is already in a group call.",409);const offer=sdp(d.offer);if(!offer.startsWith("v=0")||!offer.includes("m=audio")||d.mode==="video"&&!offer.includes("m=video"))fail("Invalid call offer.");
    const inserted=await q("INSERT OR IGNORE INTO social_calls(id,caller,callee,mode,status,offer,created,updated,expires) SELECT ?,?,?,?,'ringing',?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM social_calls WHERE status IN ('ringing','accepted') AND expires>? AND (caller IN (?,?) OR callee IN (?,?))) AND EXISTS(SELECT 1 FROM friendships WHERE id=? AND status='accepted') AND NOT EXISTS(SELECT 1 FROM social_blocks WHERE (blocker=? AND target=?) OR (blocker=? AND target=?)) RETURNING id",callId,id,peer,d.mode,offer,now,now,ms+60000,ms,id,peer,id,peer,pair(peer),id,peer,peer,id).first();
    if(!inserted){const existing=await q("SELECT * FROM social_calls WHERE id=? AND caller=? AND callee=?",callId,id,peer).first();if(!existing||existing.mode!==d.mode||existing.offer!==offer||existing.status!=="ringing")fail("One of you is already in a call. Try again shortly.",409)}return json({id:callId},201);
   }

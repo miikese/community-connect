@@ -128,3 +128,49 @@ Native accounts use PBKDF2-SHA256 with a random salt and 100,000 iterations, plu
 The new schema is in migrations 0001 and 0002; apply both when deploying existing D1 instances. Local startup applies them automatically. Existing records and translation features remain available.
 
 Checks: 43 unit/API tests, type checking, lint, both builds, the original reporting and translation browser journeys, and `scripts/workspaces-check.py` (native signup, super-admin login, school registration/review, delegated posting, public feed and mobile layouts). The CLI and actual password hashes stay server-side.
+
+## Messenger, usernames and groups
+
+Open `/messages` (or **Friends & chat**) for the dedicated messenger workspace.
+Every account receives a unique username. New members choose one at signup;
+existing members keep their profile username or receive a private default on
+next sign-in, which they can change under **My profile**. Discovery is opt-in.
+
+- Direct conversations require an accepted friendship. Create named private
+  groups with 1–5 accepted friends; each group supports up to six people.
+- Filter the inbox by All, Unread, Read, or Groups; pin conversations and mark
+  them read or unread. An unread reminder never withdraws an existing receipt.
+  Group receipts count the current members who have read a message.
+- Record and review voice notes (up to two minutes) or video notes (up to one
+  minute) before sending. Recordings are bounded to 12 MB and stored privately
+  in R2. Only authorized conversation participants can stream them, including
+  byte-range playback. Removing a friendship, blocking, or leaving a group
+  removes the corresponding access. Unsent uploaded drafts can be discarded.
+- Direct and group voice/video calls use real browser WebRTC media. Group calls
+  support up to six members, participant-level mute/camera controls, leaving,
+  host ending, session expiry, and authenticated participant-only signaling.
+  Calls acquire devices after an explicit action and stop tracks when leaving.
+
+Apply all pending migrations (the messenger adds 0004 and 0005). Local startup
+and Sites publication handle migrations; existing accounts and messages remain.
+The local upload runner supports the same private range requests as hosted R2.
+
+Public STUN is available by default. For reliable connections across restrictive
+networks, configure `RTC_TURN_URLS` and a coturn-compatible `RTC_TURN_SECRET` as
+private runtime variables. The server issues short-lived credentials; the shared
+secret is never sent to browsers. Calls are not recorded. Message notes are
+stored for their conversation and are not end-to-end encrypted.
+
+Verification:
+
+```sh
+npm run typecheck
+npm test
+npm run build:local
+APP_URL=http://127.0.0.1:3110 /path/to/playwright-python scripts/e2e-messenger.py
+APP_URL=http://127.0.0.1:3110 /path/to/playwright-python scripts/e2e-social.py
+```
+
+The messenger browser test uses three separate accounts and synthetic camera/
+microphone devices to verify group creation, read/unread state, actual recording
+playback, three-way video frames, voice calls, controls and resource cleanup.

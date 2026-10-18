@@ -28,7 +28,7 @@ export function AccountPage() {
             setMessage("");
             const fd = new FormData(e.currentTarget);
             try {
-              const result=await api("auth/" + mode, "POST", Object.fromEntries(fd));
+              const result=await api("auth/" + mode, "POST", {...Object.fromEntries(fd),discoverable:fd.get("discoverable")==="on"});
               location.assign(
                 new URL(result.user?.role==="super-admin"?"/?section=platform":"/?section=communities", location.origin).href,
               );
@@ -77,6 +77,7 @@ export function AccountPage() {
               />
             </label>
           )}
+          {mode === "register" && <><label className="field">Username<input name="username" required minLength={3} maxLength={24} pattern="[a-z][a-z0-9_]{2,23}" autoComplete="username" placeholder="your_username"/><small>3–24 lowercase letters, numbers or underscores. Yours alone.</small></label><label className="signup-discoverability"><input name="discoverable" type="checkbox"/><span>Let signed-in members find me by username. I approve friend requests before chats and calls.</span></label></>}
           <label className="field">
             Email
             <input

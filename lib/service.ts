@@ -1,3 +1,6 @@
+import {ensureSocialIdentity} from "./social-identity";
+import {chatRoute} from "./chat-service";
+import {groupCallRoute} from "./group-call-service";
 import {accountAuth,accountSession,type OwnerSettings} from "./account-auth";
 import {socialRoute} from "./social-service";
 import {communityRoute} from "./communities";
@@ -35,6 +38,7 @@ export async function handle(req:Request,ctx:Context):Promise<Response> {
  const signed=()=>{if(!user)error("Sign in to continue.",401);return user!;};
  const admin=async()=>{const u=signed();const r=await stmt("SELECT role FROM users WHERE id=?",u.userId).first();if(!ctx.adminIds.includes(u.userId)&&!(!u.passwordAccount&&u.email&&ctx.adminEmails?.includes(u.email.toLowerCase()))&&r?.role!=="admin"&&r?.role!=="moderator"&&r?.role!=="super-admin")error("Moderator access required.",403);return u;};
  try {
+  if(user)await ensureSocialIdentity(db,user);
   if(path.startsWith("auth/")&&req.method==="POST"){
    if((req.headers.get("origin")&&req.headers.get("origin")!==url.origin)||req.headers.get("sec-fetch-site")==="cross-site")error("Cross-origin authentication is not allowed.",403);
    return await accountAuth(req,db,path,path==="auth/logout"?{}:await body(req),ctx.owner);
@@ -50,12 +54,14 @@ export async function handle(req:Request,ctx:Context):Promise<Response> {
    const origin=req.headers.get("origin");
    if(origin && origin!==url.origin) error("Cross-origin writes are not allowed.",403);
    signed();
-   const chat=path==="social/messages";
+   const chat=["social/messages","social/group-messages","social/group-signals","social/group-calls"].includes(path);
    const key=user!.userId+(chat?":chat:":":")+Math.floor(Date.now()/60000);
    const limit=await stmt("INSERT INTO limits(id,count) VALUES(?,1) ON CONFLICT(id) DO UPDATE SET count=count+1 RETURNING count",key).first();
-   if(limit.count>(path==="social/messages"?90:35))error("Please wait a minute before trying again.",429);
+   if(limit.count>(chat?120:35))error("Please wait a minute before trying again.",429);
    if(Math.random()<0.02) await stmt("DELETE FROM limits WHERE id NOT LIKE ?", "%:"+Math.floor(Date.now()/60000)).run();
   }
+  const chatResponse=await chatRoute(req,{...ctx,user},()=>body(req,70000),json);if(chatResponse)return chatResponse;
+  const groupResponse=await groupCallRoute(req,{...ctx,user},()=>body(req,70000),json);if(groupResponse)return groupResponse;
   const social=await socialRoute(req,{...ctx,user},()=>body(req,70000),json);if(social)return social;
   const communityResponse=await communityRoute(req,{...ctx,user},()=>body(req),json);if(communityResponse)return communityResponse;
   if(path==="seed" && req.method==="POST") {
@@ -65,7 +71,7 @@ export async function handle(req:Request,ctx:Context):Promise<Response> {
    if(!user)return json({user:null});
    await stmt("INSERT INTO users(id,name,role) VALUES(?,?,'member') ON CONFLICT(id) DO UPDATE SET name=excluded.name",user.userId,user.displayName).run();
    const u=await stmt("SELECT * FROM users WHERE id=?",user.userId).first();
-   return json({user:{id:user.userId,name:user.displayName,role:(ctx.adminIds.includes(user.userId)||(!user.passwordAccount&&user.email&&ctx.adminEmails?.includes(user.email.toLowerCase())))?"super-admin":u.role},notifications:await all("SELECT * FROM notifications WHERE owner=? ORDER BY created DESC LIMIT 50",user.userId)});
+   return json({user:{id:user.userId,name:user.displayName,username:(await db.prepare("SELECT handle FROM social_profiles WHERE user_id=?").bind(user.userId).first())?.handle,role:(ctx.adminIds.includes(user.userId)||(!user.passwordAccount&&user.email&&ctx.adminEmails?.includes(user.email.toLowerCase())))?"super-admin":u.role},notifications:await all("SELECT * FROM notifications WHERE owner=? ORDER BY created DESC LIMIT 50",user.userId)});
   }
   if(path==="records" && req.method==="GET") {
    const kind=url.searchParams.get("kind")||"",mine=url.searchParams.get("mine")==="1",review=url.searchParams.get("review")==="1";
@@ -147,10 +153,12 @@ export async function handle(req:Request,ctx:Context):Promise<Response> {
   if(path==="notifications" && req.method==="POST"){await stmt("UPDATE notifications SET read=1 WHERE owner=?",signed().userId).run();return json({read:true});}
   if(path==="account" && req.method==="DELETE") {
    const u=signed();if(await stmt("SELECT id FROM communities WHERE owner=?",u.userId).first())error("Transfer ownership or delete your workspaces before deleting your account.",409);
-   await db.batch([stmt("DELETE FROM community_admins WHERE user=?",u.userId),stmt("DELETE FROM account_sessions WHERE user_id=?",u.userId),stmt("DELETE FROM credentials WHERE user_id=?",u.userId)]);
+
+   const notes=await all("SELECT id FROM social_media WHERE owner=?",u.userId);if(ctx.bucket)await Promise.all(notes.map((p:any)=>ctx.bucket!.delete("notes/"+p.id)));
    const photos=await all("SELECT id FROM uploads WHERE owner=?",u.userId);
    if(ctx.bucket)await Promise.all(photos.map((p:any)=>ctx.bucket!.delete(p.id)));
    await db.batch([
+    stmt("DELETE FROM community_admins WHERE user=?",u.userId),stmt("DELETE FROM account_sessions WHERE user_id=?",u.userId),stmt("DELETE FROM credentials WHERE user_id=?",u.userId),
     stmt("DELETE FROM audit WHERE record IN (SELECT id FROM records WHERE owner=?)",u.userId),
     stmt("DELETE FROM actions WHERE record IN (SELECT id FROM records WHERE owner=?)",u.userId),
     stmt("DELETE FROM records WHERE owner=?",u.userId),stmt("DELETE FROM actions WHERE owner=?",u.userId),
