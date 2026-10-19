@@ -1,5 +1,6 @@
 import type {Context} from "./service";
 import {chatFail as fail,chatText as text,chatUUID as uuid,requireFriend,requireGroup} from "./chat-access";
+import {MAX_UPLOAD,cleanFilename,validUpload} from "./upload-policy";
 const MAX_NOTE=12*1024*1024;
 export async function chatRoute(req:Request,ctx:Context,read:()=>Promise<any>,json:(v:unknown,s?:number)=>Response):Promise<Response|null>{
  const url=new URL(req.url),path=url.pathname.replace(/^\/api\//,"");
@@ -9,10 +10,10 @@ export async function chatRoute(req:Request,ctx:Context,read:()=>Promise<any>,js
  const target=async(peer:string|null,thread:string|null)=>{if((!peer&&!thread)||(peer&&thread))fail("Choose one conversation.");if(peer)await requireFriend(db,id,peer);else await requireGroup(db,id,thread!)};
  const attachment=async(key:unknown,peer:string|null,thread:string|null)=>{
   const row=await q("SELECT * FROM social_media WHERE id=? AND owner=?",uuid(key),id).first();
-  if(!row||row.peer!==peer||row.thread!==thread)fail("This recording belongs to another conversation.",403);
+  if(!row||row.scope!=="conversation"||row.peer!==peer||row.thread!==thread)fail("This recording belongs to another conversation.",403);
   return row;
  };
- const mediaFields="a.kind AS media_kind,a.mime AS media_mime,a.duration AS duration,a.size AS media_size";
+ const mediaFields="a.kind AS media_kind,a.mime AS media_mime,a.duration AS duration,a.size AS media_size,a.filename AS filename";
  if(path==="social/chat-state"&&req.method==="POST"){
   const d=await read(),peer=d.peer?text(d.peer,200,1):null,thread=d.thread?uuid(d.thread):null;await target(peer,thread);
   if(d.unread!==undefined&&typeof d.unread!=="boolean"||d.pinned!==undefined&&typeof d.pinned!=="boolean")fail("Choose a valid conversation preference.");
@@ -74,7 +75,7 @@ export async function chatRoute(req:Request,ctx:Context,read:()=>Promise<any>,js
   }
   if(req.method==="POST"){
    const d=await read(),peer=group?null:text(d.peer,200,1),thread=group?uuid(d.thread):null;await target(peer,thread);
-   const nonce=uuid(d.requestId),kind=d.kind||"text";if(!["text","voice","video"].includes(kind))fail("Choose a text message, voice note or video note.");
+   const nonce=uuid(d.requestId),kind=d.kind||"text";if(!["text","voice","video","image","file"].includes(kind))fail("Choose a text message, voice note or video note.");
    const body=text(d.body??"",4000,kind==="text"?1:0),note=kind==="text"?null:await attachment(d.media,peer,thread);
    if(note&&note.kind!==kind)fail("The recording type does not match the message.");
    const table=group?"chat_messages":"social_messages",prior=await q(`SELECT * FROM ${table} WHERE sender=? AND id=?`,id,nonce).first();
@@ -96,30 +97,35 @@ export async function chatRoute(req:Request,ctx:Context,read:()=>Promise<any>,js
  }
  if(path==="social/media"&&req.method==="POST"){
   if(!ctx.bucket)fail("Recording storage is temporarily unavailable.",503);
-  const peer=url.searchParams.get("peer"),thread=url.searchParams.get("thread");await target(peer,thread);
-  const kind=req.headers.get("x-note-kind"),duration=Number(req.headers.get("x-note-duration-ms")),mime=(req.headers.get("content-type")||"").split(";")[0].trim().toLowerCase();
-  if(!["voice","video"].includes(kind||"")||!Number.isInteger(duration)||duration<100||duration>(kind==="voice"?120000:60000))fail("Voice notes can be up to 2 minutes; video notes up to 1 minute.");
-  if(!(kind==="voice"?["audio/webm","audio/ogg","audio/mp4"]:["video/webm","video/mp4"]).includes(mime))fail("This recording format is not supported.",415);
-  if(Number(req.headers.get("content-length"))>MAX_NOTE)fail("Recordings must be under 12 MB.",413);
-  const reader=req.body?.getReader(),chunks:Uint8Array[]=[];let size=0;if(reader)for(;;){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>MAX_NOTE){await reader.cancel();fail("Recordings must be under 12 MB.",413)}chunks.push(part.value)}
+  const scope=url.searchParams.get("scope")==="status"?"status":"conversation",peer=url.searchParams.get("peer"),thread=url.searchParams.get("thread");
+  if(scope==="conversation")await target(peer,thread);else if(peer||thread)fail("Status uploads cannot belong to a chat.");
+  const device=req.headers.get("x-upload-mode")==="device",kind=req.headers.get("x-note-kind"),duration=device?0:Number(req.headers.get("x-note-duration-ms")),mime=(req.headers.get("content-type")||"").split(";")[0].trim().toLowerCase(),filename=cleanFilename(req.headers.get("x-file-name")||"attachment");
+  if(device){if(!["image","video","file"].includes(kind||"")||scope==="status"&&kind==="file"||kind==="image"&&!mime.startsWith("image/")||kind==="video"&&!mime.startsWith("video/")||kind==="file"&&(mime.startsWith("image/")||mime.startsWith("video/")))fail("Choose a supported photo, video or file.",415)}
+  else{if(scope!=="conversation"||!["voice","video"].includes(kind||"")||!Number.isInteger(duration)||duration<100||duration>(kind==="voice"?120000:60000))fail("Voice notes can be up to 2 minutes; video notes up to 1 minute.");if(!(kind==="voice"?["audio/webm","audio/ogg","audio/mp4"]:["video/webm","video/mp4"]).includes(mime))fail("This recording format is not supported.",415)}
+  const max=device?MAX_UPLOAD:MAX_NOTE;
+  if(Number(req.headers.get("content-length"))>max)fail("Choose a file under "+(device?25:12)+" MB.",413);
+  const reader=req.body?.getReader(),chunks:Uint8Array[]=[];let size=0;if(reader)for(;;){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>max){await reader.cancel();fail("This upload is too large.",413)}chunks.push(part.value)}
   const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length}
-  const magic=new TextDecoder().decode(bytes.slice(0,12)),valid=size>=12&&(mime.endsWith("webm")&&[26,69,223,163].every((b,i)=>bytes[i]===b)||mime.endsWith("ogg")&&magic.startsWith("OggS")||mime.endsWith("mp4")&&magic.slice(4,8)==="ftyp");if(!valid)fail("The recording file could not be read.");
+  const magic=new TextDecoder().decode(bytes.slice(0,12)),valid=device?validUpload(mime,bytes,filename):size>=12&&(mime.endsWith("webm")&&[26,69,223,163].every((b,i)=>bytes[i]===b)||mime.endsWith("ogg")&&magic.startsWith("OggS")||mime.endsWith("mp4")&&magic.slice(4,8)==="ftyp");if(!valid)fail("The file contents do not match a supported format.",device?415:400);
+  const usage=await q("SELECT COALESCE(SUM(size),0) AS total FROM social_media WHERE owner=? AND created>?",id,new Date(Date.now()-86400000).toISOString()).first();if(Number(usage.total)+size>150*1024*1024)fail("Your daily upload allowance is 150 MB. Try again later.",429);
   const key=crypto.randomUUID();await ctx.bucket!.put("notes/"+key,bytes,{httpMetadata:{contentType:mime}});
-  try{await q("INSERT INTO social_media(id,owner,peer,thread,kind,mime,size,duration,created) VALUES(?,?,?,?,?,?,?,?,?)",key,id,peer,thread,kind!,mime,size,duration,now).run()}catch(e){await ctx.bucket!.delete("notes/"+key);throw e}
+  try{await q("INSERT INTO social_media(id,owner,peer,thread,kind,mime,size,duration,filename,scope,created) VALUES(?,?,?,?,?,?,?,?,?,?,?)",key,id,peer,thread,kind!,mime,size,duration,filename,scope,now).run()}catch(e){await ctx.bucket!.delete("notes/"+key);throw e}
   return json({id:key,kind,mime,duration,size},201);
  }
  if(path.startsWith("social/media/")){
   const key=uuid(path.split("/")[2]),note=await q("SELECT * FROM social_media WHERE id=?",key).first();if(!note||!ctx.bucket)fail("Recording not found.",404);
-  const sent=await q("SELECT id FROM social_messages WHERE media=? UNION ALL SELECT id FROM chat_messages WHERE media=?",key,key).first();
+  const statusPost=note.scope==="status"?await q("SELECT * FROM status_posts WHERE media=?",key).first():null;
+  const sent=statusPost||await q("SELECT id FROM social_messages WHERE media=? UNION ALL SELECT id FROM chat_messages WHERE media=?",key,key).first();
   if(req.method==="DELETE"){
    if(note.owner!==id)fail("Recording not found.",404);if(sent)fail("A sent recording cannot be discarded as a draft.",409);
    await ctx.bucket!.delete("notes/"+key);await q("DELETE FROM social_media WHERE id=?",key).run();return json({deleted:true});
   }
   if(!["GET","HEAD"].includes(req.method))return json({error:"Method not allowed."},405);
-  if(note.thread)await requireGroup(db,id,note.thread);
+  if(note.scope==="status"){if(statusPost&&statusPost.expires<=Date.now())fail("This status has expired.",404);if(id!==note.owner){if(!statusPost)fail("Media not found.",404);await requireFriend(db,id,note.owner)}}
+  else if(note.thread)await requireGroup(db,id,note.thread);
   else if(id!==note.owner){if(id!==note.peer||!sent)fail("Recording not found.",404);await requireFriend(db,id,note.owner)}
   if(id!==note.owner&&!sent)fail("Recording not found.",404);
-  const headers:Record<string,string>={"content-type":note.mime,"cache-control":"private,no-store","x-content-type-options":"nosniff","accept-ranges":"bytes","content-disposition":"inline"};
+  const headers:Record<string,string>={"content-type":note.mime,"cache-control":"private,no-store","x-content-type-options":"nosniff","accept-ranges":"bytes","content-disposition":note.kind==="file"?"attachment; filename*=UTF-8''"+encodeURIComponent(note.filename).replace(/'/g,"%27"):"inline"};
   let offset=0,length=Number(note.size),status=200;
   const range=req.headers.get("range");if(range){
    const match=/^bytes=(\d*)-(\d*)$/.exec(range);if(!match||!match[1]&&!match[2])return new Response(null,{status:416,headers:{"content-range":"bytes */"+note.size}});

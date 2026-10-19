@@ -1,4 +1,5 @@
 import {ensureSocialIdentity} from "./social-identity";
+import {statusRoute} from "./status-service";
 import {chatRoute} from "./chat-service";
 import {groupCallRoute} from "./group-call-service";
 import {accountAuth,accountSession,type OwnerSettings} from "./account-auth";
@@ -60,6 +61,7 @@ export async function handle(req:Request,ctx:Context):Promise<Response> {
    if(limit.count>(chat?120:35))error("Please wait a minute before trying again.",429);
    if(Math.random()<0.02) await stmt("DELETE FROM limits WHERE id NOT LIKE ?", "%:"+Math.floor(Date.now()/60000)).run();
   }
+  const statusResponse=await statusRoute(req,{...ctx,user},()=>body(req),json);if(statusResponse)return statusResponse;
   const chatResponse=await chatRoute(req,{...ctx,user},()=>body(req,70000),json);if(chatResponse)return chatResponse;
   const groupResponse=await groupCallRoute(req,{...ctx,user},()=>body(req,70000),json);if(groupResponse)return groupResponse;
   const social=await socialRoute(req,{...ctx,user},()=>body(req,70000),json);if(social)return social;

@@ -174,3 +174,11 @@ APP_URL=http://127.0.0.1:3110 /path/to/playwright-python scripts/e2e-social.py
 The messenger browser test uses three separate accounts and synthetic camera/
 microphone devices to verify group creation, read/unread state, actual recording
 playback, three-way video frames, voice calls, controls and resource cleanup.
+
+### Device sharing, memes and Status
+
+Chats and private groups now accept photos, MP4/WebM videos, PDFs, text/CSV, ZIP and Office documents from the device (up to 25 MB per upload). Documents download as attachments; unsupported active-content formats are rejected. A canvas meme editor accepts your own image or a colored background, with editable captions, preview and PNG download. Images and memes can be sent in chat or posted to Status.
+
+Friends & chat → Status supports text, photos, video and memes, visible only to current accepted friends for 24 hours. Blocking/removing a friend revokes access. View counts are visible only to the owner, with one count per viewer. Owners can delete active updates and their files. Expiry is enforced for both posts and media on the server; the uploader's next status publication also removes up to 50 expired updates and their files. Other expired storage can remain until that cleanup or account deletion; it is not publicly accessible. Initial limits are 20 posts/day and 150 MB of uploaded media/day per account. No external meme API is required.
+
+Validation: `npm test`, `npm run typecheck`, `npm run build:local`; browser checks in `scripts/e2e-uploads-status.py` use synthetic accounts and an isolated local server, alongside the existing messenger/call regression suite. Never run synthetic signups or test calls against production.
