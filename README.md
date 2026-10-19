@@ -182,3 +182,11 @@ Chats and private groups now accept photos, MP4/WebM videos, PDFs, text/CSV, ZIP
 Friends & chat → Status supports text, photos, video and memes, visible only to current accepted friends for 24 hours. Blocking/removing a friend revokes access. View counts are visible only to the owner, with one count per viewer. Owners can delete active updates and their files. Expiry is enforced for both posts and media on the server; the uploader's next status publication also removes up to 50 expired updates and their files. Other expired storage can remain until that cleanup or account deletion; it is not publicly accessible. Initial limits are 20 posts/day and 150 MB of uploaded media/day per account. No external meme API is required.
 
 Validation: `npm test`, `npm run typecheck`, `npm run build:local`; browser checks in `scripts/e2e-uploads-status.py` use synthetic accounts and an isolated local server, alongside the existing messenger/call regression suite. Never run synthetic signups or test calls against production.
+
+### Meme and sticker studio
+
+Open `/messages?tab=memes`, or **Friends & chat → Memes & stickers**. Browse 16 original reaction templates, search captions, filter by mood, download PNGs, and save favorites to your account. Sticker downloads keep transparent backgrounds. Customize a template or upload your own picture in the editor; choose **Save to collection** to keep it privately on the server, or **Download PNG** for a device copy.
+
+Each account can keep 30 custom PNGs (up to 2 MB each), plus the built-in favorites. Collections persist across sign-ins and devices in D1/R2, and are accessible only to the owner. Removing a creation deletes its saved file. Account deletion removes saved creations too. Choosing a saved item in a chat or Status creates a separate shared copy with the existing conversation/friend access rules; deleting the original does not recall copies already sent. No paid meme API or third-party image scraping is used.
+
+The schema addition is migration `0007_brave_ezekiel_stane.sql`. It adds a table and indexes without changing existing accounts, usernames, messages or statuses. API tests cover ownership boundaries, download headers, idempotent favorites, invalid content, storage bounds, and account cleanup.

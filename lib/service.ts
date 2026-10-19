@@ -1,5 +1,6 @@
 import {ensureSocialIdentity} from "./social-identity";
 import {statusRoute} from "./status-service";
+import {creationRoute} from "./creation-service";
 import {chatRoute} from "./chat-service";
 import {groupCallRoute} from "./group-call-service";
 import {accountAuth,accountSession,type OwnerSettings} from "./account-auth";
@@ -61,6 +62,7 @@ export async function handle(req:Request,ctx:Context):Promise<Response> {
    if(limit.count>(chat?120:35))error("Please wait a minute before trying again.",429);
    if(Math.random()<0.02) await stmt("DELETE FROM limits WHERE id NOT LIKE ?", "%:"+Math.floor(Date.now()/60000)).run();
   }
+  const creationResponse=await creationRoute(req,{...ctx,user},()=>body(req),json);if(creationResponse)return creationResponse;
   const statusResponse=await statusRoute(req,{...ctx,user},()=>body(req),json);if(statusResponse)return statusResponse;
   const chatResponse=await chatRoute(req,{...ctx,user},()=>body(req,70000),json);if(chatResponse)return chatResponse;
   const groupResponse=await groupCallRoute(req,{...ctx,user},()=>body(req,70000),json);if(groupResponse)return groupResponse;
@@ -156,6 +158,7 @@ export async function handle(req:Request,ctx:Context):Promise<Response> {
   if(path==="account" && req.method==="DELETE") {
    const u=signed();if(await stmt("SELECT id FROM communities WHERE owner=?",u.userId).first())error("Transfer ownership or delete your workspaces before deleting your account.",409);
 
+   const creations=await all("SELECT id FROM saved_creations WHERE owner=? AND template IS NULL",u.userId);if(ctx.bucket)await Promise.all(creations.map((p:any)=>ctx.bucket!.delete("creations/"+p.id)));
    const notes=await all("SELECT id FROM social_media WHERE owner=?",u.userId);if(ctx.bucket)await Promise.all(notes.map((p:any)=>ctx.bucket!.delete("notes/"+p.id)));
    const photos=await all("SELECT id FROM uploads WHERE owner=?",u.userId);
    if(ctx.bucket)await Promise.all(photos.map((p:any)=>ctx.bucket!.delete(p.id)));
