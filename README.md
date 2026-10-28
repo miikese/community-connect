@@ -32,6 +32,10 @@ Hosted identity comes from ChatGPT/Sites; do not expose the local mock login pub
 - Pending reports are owner/moderator-only. Public reports omit owner IDs.
 - Community action board, real record counts, search/LGA/category/status filters,
   attributed OSM map, followable issues and chronological status history.
+  Switching listings clears the previous timeline and ignores delayed responses
+  for closed listings; loading and history failures are shown explicitly.
+  Issue-status filters apply only to issues and reset when following quick links
+  to opportunities or skills.
 - Account notifications for moderation, followed issue updates, volunteer
   participation and private coordination requests.
 - Private volunteer interests/service-area profiles and idempotent activity joining.
